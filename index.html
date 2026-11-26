@@ -322,5 +322,115 @@ elemento("restaurar").onclick = () => {
 
 atualizar();
 </script>
+<script>
+(() => {
+  if (document.getElementById("cadastroProduto")) return;
+
+  const secao = document.createElement("section");
+  secao.className = "card";
+
+  secao.innerHTML = `
+    <h2>Cadastrar produto fictício</h2>
+    <form id="cadastroProduto">
+      <label for="novoCodigo">Código único</label>
+      <input id="novoCodigo" required maxlength="30"
+        placeholder="Ex.: P06">
+
+      <label for="novaDescricao">Descrição</label>
+      <input id="novaDescricao" required maxlength="90"
+        placeholder="Ex.: Jaleco de teste">
+
+      <label for="novaCategoria">Categoria</label>
+      <select id="novaCategoria">
+        <option>EPI</option>
+        <option>Uniforme</option>
+      </select>
+
+      <label for="novoTamanho">Tamanho</label>
+      <input id="novoTamanho" required maxlength="20"
+        placeholder="Ex.: M">
+
+      <label for="novaUnidade">Unidade de medida</label>
+      <select id="novaUnidade">
+        <option value="unidades">Unidades</option>
+        <option value="pares">Pares</option>
+        <option value="caixas">Caixas</option>
+      </select>
+
+      <label for="novoSaldo">Saldo inicial</label>
+      <input id="novoSaldo" type="number" min="0"
+        max="1000000" step="1" value="0" required>
+
+      <label for="novoMinimo">Estoque mínimo</label>
+      <input id="novoMinimo" type="number" min="0"
+        max="1000000" step="1" value="0" required>
+
+      <button type="submit">Cadastrar produto</button>
+    </form>
+  `;
+
+  document.querySelector("main").append(secao);
+
+  elemento("cadastroProduto").onsubmit = evento => {
+    evento.preventDefault();
+
+    const id = elemento("novoCodigo").value.trim().toUpperCase();
+    const nome = elemento("novaDescricao").value.trim();
+    const tamanho = elemento("novoTamanho").value.trim();
+    const inicial = Number(elemento("novoSaldo").value);
+    const minimo = Number(elemento("novoMinimo").value);
+
+    if (!id || !nome || !tamanho) {
+      avisar("Preencha código, descrição e tamanho.");
+      return;
+    }
+
+    if (dados.produtos.some(p =>
+      p.id.toUpperCase() === id
+    )) {
+      avisar("Este código já existe. Escolha outro.");
+      return;
+    }
+
+    if (![inicial, minimo].every(n =>
+      Number.isSafeInteger(n) && n >= 0 && n <= 1000000
+    )) {
+      avisar("Use saldos e mínimos inteiros entre 0 e 1.000.000.");
+      return;
+    }
+
+    const produto = {
+      id,
+      nome,
+      tamanho,
+      categoria: elemento("novaCategoria").value,
+      unidade: elemento("novaUnidade").value,
+      inicial,
+      minimo
+    };
+
+    dados.produtos.push(produto);
+    const salvo = guardar();
+
+    const opcao = document.createElement("option");
+    opcao.value = produto.id;
+    opcao.textContent = produto.nome + " · " + produto.tamanho;
+    elemento("produto").append(opcao);
+
+    atualizar();
+    evento.target.reset();
+
+    avisar(salvo
+      ? "Produto cadastrado e salvo neste navegador."
+      : "Produto cadastrado apenas nesta sessão. Salvamento indisponível."
+    );
+
+    elemento("aviso").scrollIntoView({
+      behavior: "smooth",
+      block: "center"
+    });
+  };
+})();
+</script>
 </body>
 </html>
