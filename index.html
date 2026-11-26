@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Controle de EPIs</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f0f4f8;color:#173248;
+font-family:Arial,sans-serif}
+header{background:#173248;color:white;padding:24px}
+header small{color:#8ce0bc}
+main{max-width:700px;margin:auto;padding:16px}
+.card{background:white;padding:18px;border-radius:14px;
+margin-bottom:14px}
+h1{font-size:25px}h2{font-size:20px}
+label{display:block;margin:16px 0 6px}
+input,select,button{width:100%;padding:13px;font-size:16px;
+border-radius:8px;border:1px solid #bac8d2}
+button{background:#087f62;color:white;border:0;
+margin-top:16px;cursor:pointer}
+button:disabled{opacity:.5}
+.item{border-bottom:1px solid #e0e7ed;padding:14px 0}
+.item:last-child{border:0}
+small,p{line-height:1.5}
+.alerta{color:#9a5200;font-weight:bold}
+#aviso{background:#fff1cc;padding:12px;border-radius:8px}
+#aviso:empty{display:none}
+.secundario{background:#40586b}
+</style>
+</head>
+<body>
+<header>
+<small>DEMONSTRAÇÃO — DADOS FICTÍCIOS</small>
+<h1>Controle de EPIs e Uniformes</h1>
+<p>Produtos, estoque e movimentações</p>
+</header>
+
+<main>
+<p>Protótipo pessoal. Não insira dados reais da empresa.
+Os testes ficam somente neste navegador e podem ser perdidos
+ao limpar seus dados.</p>
+
+<p id="aviso" role="status" aria-live="polite"></p>
+
+<section class="card">
+<h2>Estoque disponível</h2>
+<div id="estoque"></div>
+</section>
+
+<section class="card">
+<h2>Registrar movimentação</h2>
+<form id="formulario">
+<label for="operacao">Operação</label>
+<select id="operacao">
+<option value="saida">Retirada</option>
+<option value="entrada">Entrada</option>
+</select>
+
+<label for="produto">Produto</label>
+<select id="produto"></select>
+
+<label for="quantidade">Quantidade</label>
+<input id="quantidade" type="number" min="1"
+max="1000000" step="1" required>
+
+<label for="data">Data</label>
+<input id="data" type="date" required>
+
+<div id="camposRetirada">
+<label for="pessoa">Pessoa fictícia</label>
+<select id="pessoa">
+<option>Pessoa Teste 01</option>
+<option>Pessoa Teste 02</option>
+<option>Pessoa Teste 03</option>
+</select>
+
+<label for="area">Área fictícia</label>
+<select id="area">
+<option>Área Alfa</option>
+<option>Área Beta</option>
+<option>Área Gama</option>
+</select>
+<small>CD fora do escopo deste protótipo.</small>
+
+<label for="tipo">Tipo de retirada</label>
+<select id="tipo">
+<option>Normal</option>
+<option>Extra</option>
+</select>
+</div>
+
+<button id="salvar">Salvar movimentação</button>
+</form>
+</section>
+
+<section class="card">
+<h2>Histórico</h2>
+<div id="historico"></div>
+</section>
+
+<section class="card">
+<h2>Dados de demonstração</h2>
+<p>Saldo = saldo inicial + entradas − retiradas.
+Este protótipo não importa relatórios nem se conecta
+a sistemas corporativos.</p>
+<button id="restaurar" class="secundario">
+Restaurar demonstração
+</button>
+</section>
+</main>
+
+<script>
+"use strict";
+
+const elemento = id => document.getElementById(id);
+const chave = "controle-epi-prototipo-1";
+let bloqueado = false;
+
+function hoje() {
+  const d = new Date();
+  return [
+    d.getFullYear(),
+    String(d.getMonth()+1).padStart(2,"0"),
+    String(d.getDate()).padStart(2,"0")
+  ].join("-");
+}
+
+function exemplos() {
+  return {
+    produtos: [
+      {id:"P01",nome:"Luva de proteção",tamanho:"M",
+       unidade:"pares",inicial:20,minimo:8},
+      {id:"P02",nome:"Óculos de proteção",tamanho:"Único",
+       unidade:"unidades",inicial:12,minimo:5},
+      {id:"P03",nome:"Calçado de segurança",tamanho:"40",
+       unidade:"pares",inicial:3,minimo:4},
+      {id:"P04",nome:"Camiseta",tamanho:"M",
+       unidade:"unidades",inicial:15,minimo:5},
+      {id:"P05",nome:"Calça",tamanho:"G",
+       unidade:"unidades",inicial:10,minimo:4}
+    ],
+    movimentos: []
+  };
+}
+
+let dados = exemplos();
+
+function avisar(texto) {
+  elemento("aviso").textContent = texto;
+}
+
+try {
+  const salvo = localStorage.getItem(chave);
+  if (salvo) {
+    const leitura = JSON.parse(salvo);
+    if (!Array.isArray(leitura.produtos) ||
+        !Array.isArray(leitura.movimentos)) {
+      throw new Error("Dados inválidos");
+    }
+    dados = leitura;
+  }
+} catch {
+  avisar("Não foi possível ler os dados anteriores. "+
+         "Foram carregados exemplos nesta sessão.");
+}
+
+function saldo(produto) {
+  return dados.movimentos
+    .filter(m => m.produto === produto.id)
+    .reduce((total,m) =>
+      total + (m.operacao === "entrada" ?
+        m.quantidade : -m.quantidade),
+      produto.inicial);
+}
+
+function guardar() {
+  try {
+    localStorage.setItem(chave,JSON.stringify(dados));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function texto(tag,conteudo) {
+  const item = document.createElement(tag);
+  item.textContent = conteudo;
+  return item;
+}
+
+function atualizar() {
+  const estoque = elemento("estoque");
+  estoque.replaceChildren();
+
+  dados.produtos.forEach(p => {
+    const item = document.createElement("div");
+    item.className = "item";
+    item.append(
+      texto("strong",p.nome+" · "+p.tamanho),
+      texto("p","Saldo: "+saldo(p)+" "+p.unidade+
+        " | Mínimo: "+p.minimo)
+    );
+
+    if (saldo(p) < p.minimo) {
+      const alerta = texto("small","Abaixo do estoque mínimo");
+      alerta.className = "alerta";
+      item.append(alerta);
+    }
+    estoque.append(item);
+  });
+
+  const historico = elemento("historico");
+  historico.replaceChildren();
+
+  if (!dados.movimentos.length) {
+    historico.append(texto("p","Nenhuma movimentação registrada."));
+  }
+
+  dados.movimentos.slice().reverse().forEach(m => {
+    const p = dados.produtos.find(p => p.id === m.produto);
+    const item = document.createElement("div");
+    item.className = "item";
+
+    item.append(
+      texto("strong",
+        (m.operacao === "entrada" ? "Entrada" : "Retirada")+
+        " · "+m.quantidade+" "+p.unidade),
+      texto("p",p.nome+" · "+p.tamanho),
+      texto("small",m.data.split("-").reverse().join("/")+
+        (m.operacao === "saida" ?
+          " · "+m.pessoa+" · "+m.area+" · "+m.tipo : ""))
+    );
+    historico.append(item);
+  });
+}
+
+dados.produtos.forEach(p => {
+  const opcao = document.createElement("option");
+  opcao.value = p.id;
+  opcao.textContent = p.nome+" · "+p.tamanho;
+  elemento("produto").append(opcao);
+});
+
+elemento("data").value = hoje();
+elemento("data").max = hoje();
+
+elemento("operacao").onchange = () => {
+  elemento("camposRetirada").hidden =
+    elemento("operacao").value === "entrada";
+};
+
+elemento("formulario").onsubmit = evento => {
+  evento.preventDefault();
+  if (bloqueado) return;
+
+  const produto = dados.produtos.find(
+    p => p.id === elemento("produto").value
+  );
+  const quantidade = Number(elemento("quantidade").value);
+  const operacao = elemento("operacao").value;
+  const data = elemento("data").value;
+
+  if (!produto || !Number.isSafeInteger(quantidade) ||
+      quantidade <= 0 || quantidade > 1000000) {
+    avisar("Informe uma quantidade inteira positiva válida.");
+    return;
+  }
+
+  if (!data || data > hoje()) {
+    avisar("Informe uma data válida, não futura.");
+    return;
+  }
+
+  if (operacao === "saida" && quantidade > saldo(produto)) {
+    avisar("Saldo insuficiente para essa retirada.");
+    return;
+  }
+
+  bloqueado = true;
+  elemento("salvar").disabled = true;
+
+  dados.movimentos.push({
+    id: globalThis.crypto?.randomUUID?.() ||
+      Date.now()+"-"+Math.random().toString(36).slice(2),
+    produto: produto.id,
+    quantidade,
+    operacao,
+    data,
+    pessoa: operacao === "saida" ?
+      elemento("pessoa").value : "",
+    area: operacao === "saida" ?
+      elemento("area").value : "",
+    tipo: operacao === "saida" ?
+      elemento("tipo").value : ""
+  });
+
+  const salvo = guardar();
+  atualizar();
+  elemento("quantidade").value = "";
+
+  avisar(
+    (salvo ? "Movimentação salva." :
+      "Registrada apenas nesta sessão: o navegador bloqueou o salvamento.")+
+    " Saldo: "+saldo(produto)+" "+produto.unidade+"."
+  );
+
+  setTimeout(() => {
+    bloqueado = false;
+    elemento("salvar").disabled = false;
+  },1500);
+};
+
+elemento("restaurar").onclick = () => {
+  if (!confirm("Apagar seus testes e restaurar os exemplos?")) return;
+  dados = exemplos();
+  const salvo = guardar();
+  atualizar();
+  avisar(salvo ? "Demonstração restaurada." :
+    "Restaurada somente nesta sessão; salvamento indisponível.");
+};
+
+atualizar();
+</script>
+</body>
+</html>
