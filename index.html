@@ -713,6 +713,189 @@ atualizar();
     }
   };
 })();
+<script>
+(() => {
+  const PREFIXO = "estorno:";
+  const atualizarAnterior = atualizar;
+
+  function foiEstornado(id) {
+    return dados.movimentos.some(
+      m => m.id === PREFIXO + id
+    );
+  }
+
+  function estornar(id) {
+    if (bloqueado) return;
+
+    const original = dados.movimentos.find(
+      m => m.id === id
+    );
+
+    if (
+      !original ||
+      original.id.startsWith(PREFIXO) ||
+      foiEstornado(id)
+    ) {
+      avisar("Este registro não pode ser estornado novamente.");
+      return;
+    }
+
+    const produto = dados.produtos.find(
+      p => p.id === original.produto
+    );
+
+    if (!produto) {
+      avisar("Produto não encontrado. Nada foi alterado.");
+      return;
+    }
+
+    if (
+      original.operacao === "entrada" &&
+      saldo(produto) < original.quantidade
+    ) {
+      avisar(
+        "Não é possível estornar esta entrada: " +
+        "o saldo ficaria negativo."
+      );
+      elemento("aviso").scrollIntoView();
+      return;
+    }
+
+    if (!confirm(
+      "Estornar esta movimentação?\n\n" +
+      produto.nome + " · " + produto.tamanho + "\n" +
+      original.quantidade + " " + produto.unidade +
+      "\n\nO original será preservado. " +
+      "Uma movimentação contrária corrigirá o saldo."
+    )) return;
+
+    const compensacao = {
+      id: PREFIXO + original.id,
+      produto: original.produto,
+      quantidade: original.quantidade,
+      operacao: original.operacao === "saida"
+        ? "entrada" : "saida",
+      data: hoje(),
+      pessoa: original.operacao === "entrada"
+        ? "Estorno de entrada" : "",
+      area: original.operacao === "entrada"
+        ? "Ajuste fictício" : "",
+      tipo: original.operacao === "entrada"
+        ? "Normal" : ""
+    };
+
+    const novosDados = {
+      ...dados,
+      movimentos: [...dados.movimentos, compensacao]
+    };
+
+    bloqueado = true;
+
+    try {
+      localStorage.setItem(chave, JSON.stringify(novosDados));
+    } catch {
+      bloqueado = false;
+      avisar(
+        "O navegador não permitiu salvar o estorno. " +
+        "Nenhum saldo foi alterado."
+      );
+      elemento("aviso").scrollIntoView();
+      return;
+    }
+
+    dados = novosDados;
+    atualizar();
+
+    avisar(
+      "Estorno salvo. Saldo de " +
+      produto.nome + ": " +
+      saldo(produto) + " " + produto.unidade + "."
+    );
+
+    elemento("aviso").scrollIntoView({
+      behavior: "smooth",
+      block: "center"
+    });
+
+    setTimeout(() => {
+      bloqueado = false;
+    }, 1500);
+  }
+
+  atualizar = function() {
+    atualizarAnterior();
+
+    const lista = elemento("historico");
+    lista.replaceChildren();
+
+    if (!dados.movimentos.length) {
+      lista.append(
+        texto("p", "Nenhuma movimentação registrada.")
+      );
+      return;
+    }
+
+    dados.movimentos.slice().reverse().forEach(m => {
+      const produto = dados.produtos.find(
+        p => p.id === m.produto
+      );
+      if (!produto) return;
+
+      const compensacao = m.id.startsWith(PREFIXO);
+      const revertido = foiEstornado(m.id);
+      const item = document.createElement("div");
+      item.className = "item";
+
+      let titulo = m.operacao === "entrada"
+        ? "Entrada" : "Retirada";
+
+      if (compensacao) {
+        titulo = "Estorno — " + titulo.toLowerCase();
+      } else if (revertido) {
+        titulo += " — ESTORNADA";
+      }
+
+      item.append(
+        texto("strong",
+          titulo + " · " +
+          m.quantidade + " " + produto.unidade),
+        texto("p",
+          produto.nome + " · " + produto.tamanho),
+        texto("small",
+          m.data.split("-").reverse().join("/"))
+      );
+
+      if (!compensacao && m.operacao === "saida") {
+        item.append(
+          texto("p",
+            m.pessoa + " · " + m.area + " · " + m.tipo)
+        );
+      }
+
+      if (compensacao) {
+        item.append(
+          texto("p",
+            "Corrige o registro: " +
+            m.id.slice(PREFIXO.length))
+        );
+      } else {
+        item.append(texto("p", "Registro: " + m.id));
+      }
+
+      if (!compensacao && !revertido) {
+        const botao = texto("button", "Estornar");
+        botao.type = "button";
+        botao.className = "secundario";
+        botao.onclick = () => estornar(m.id);
+        item.append(botao);
+      }
+
+      lista.append(item);
+    });
+  };
+
+  atualizar();
+})();
 </script>
 </body>
 </html>
