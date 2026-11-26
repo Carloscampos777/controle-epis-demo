@@ -432,5 +432,287 @@ atualizar();
   };
 })();
 </script>
+<script>
+(() => {
+  if (document.getElementById("backupTestes")) return;
+
+  const painel = document.createElement("section");
+  painel.id = "backupTestes";
+  painel.className = "card";
+  painel.innerHTML = `
+    <h2>Cópia de segurança</h2>
+    <p>Baixe uma cópia dos produtos e movimentações fictícios.
+    Guarde o arquivo para recuperar seus testes depois.</p>
+
+    <button type="button" id="baixarBackup">
+      Baixar cópia dos testes
+    </button>
+
+    <h3>Restaurar uma cópia</h3>
+    <p>A restauração substitui os testes atuais.
+    Baixe uma cópia antes de continuar.</p>
+
+    <label for="arquivoBackup">Selecionar cópia JSON</label>
+    <input id="arquivoBackup" type="file"
+      accept=".json,application/json">
+
+    <button type="button" id="restaurarBackup"
+      class="secundario">
+      Restaurar arquivo selecionado
+    </button>
+
+    <p id="mensagemBackup" role="status"
+      aria-live="polite"></p>
+  `;
+
+  document.querySelector("main").append(painel);
+
+  const mensagem = texto => {
+    elemento("mensagemBackup").textContent = texto;
+  };
+
+  elemento("baixarBackup").onclick = () => {
+    const copia = {
+      aplicativo: "controle-epi-prototipo",
+      versao: 1,
+      exportadoEm: new Date().toISOString(),
+      dados
+    };
+
+    const arquivo = new Blob(
+      [JSON.stringify(copia, null, 2)],
+      { type: "application/json" }
+    );
+
+    const endereco = URL.createObjectURL(arquivo);
+    const link = document.createElement("a");
+    link.href = endereco;
+    link.download = "copia-epis-" + hoje() + ".json";
+
+    document.body.append(link);
+    link.click();
+    link.remove();
+
+    setTimeout(() => URL.revokeObjectURL(endereco), 30000);
+
+    mensagem(
+      "Download solicitado. Confira se o arquivo JSON " +
+      "apareceu nos downloads do seu dispositivo."
+    );
+  };
+
+  function validar(copia) {
+    const falhar = () => {
+      throw new Error(
+        "Arquivo inválido ou incompatível. " +
+        "Use uma cópia gerada por este aplicativo."
+      );
+    };
+
+    if (
+      !copia ||
+      copia.aplicativo !== "controle-epi-prototipo" ||
+      copia.versao !== 1
+    ) falhar();
+
+    const base = copia.dados;
+
+    if (
+      !base ||
+      !Array.isArray(base.produtos) ||
+      !Array.isArray(base.movimentos) ||
+      base.produtos.length === 0 ||
+      base.produtos.length > 2000 ||
+      base.movimentos.length > 10000
+    ) falhar();
+
+    const textoValido = (valor, limite) =>
+      typeof valor === "string" &&
+      valor.trim().length > 0 &&
+      valor.length <= limite;
+
+    const inteiro = valor =>
+      Number.isSafeInteger(valor) &&
+      valor >= 0 &&
+      valor <= 1000000;
+
+    const ids = new Set();
+
+    const produtos = base.produtos.map(p => {
+      if (
+        !p ||
+        !textoValido(p.id, 30) ||
+        !textoValido(p.nome, 90) ||
+        !textoValido(p.tamanho, 20) ||
+        !["unidades", "pares", "caixas"].includes(p.unidade) ||
+        !inteiro(p.inicial) ||
+        !inteiro(p.minimo) ||
+        (p.categoria !== undefined &&
+          !["EPI", "Uniforme"].includes(p.categoria))
+      ) falhar();
+
+      const id = p.id.trim();
+      const comparacao = id.toUpperCase();
+
+      if (ids.has(comparacao)) falhar();
+      ids.add(comparacao);
+
+      const produto = {
+        id,
+        nome: p.nome.trim(),
+        tamanho: p.tamanho.trim(),
+        unidade: p.unidade,
+        inicial: p.inicial,
+        minimo: p.minimo
+      };
+
+      if (p.categoria !== undefined) {
+        produto.categoria = p.categoria;
+      }
+
+      return produto;
+    });
+
+    const saldos = new Map(
+      produtos.map(p => [p.id, p.inicial])
+    );
+    const movimentosIds = new Set();
+
+    const movimentos = base.movimentos.map(m => {
+      if (
+        !m ||
+        !textoValido(m.id, 120) ||
+        movimentosIds.has(m.id) ||
+        !saldos.has(m.produto) ||
+        !["entrada", "saida"].includes(m.operacao) ||
+        !inteiro(m.quantidade) ||
+        m.quantidade === 0 ||
+        typeof m.data !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(m.data)
+      ) falhar();
+
+      const data = new Date(m.data + "T00:00:00Z");
+      if (
+        !Number.isFinite(data.getTime()) ||
+        data.toISOString().slice(0, 10) !== m.data ||
+        m.data > hoje()
+      ) falhar();
+
+      if (
+        m.operacao === "saida" &&
+        (
+          !textoValido(m.pessoa, 100) ||
+          !textoValido(m.area, 100) ||
+          m.area.trim().toUpperCase() === "CD" ||
+          !["Normal", "Extra"].includes(m.tipo)
+        )
+      ) falhar();
+
+      movimentosIds.add(m.id);
+
+      const novoSaldo = saldos.get(m.produto) +
+        (m.operacao === "entrada"
+          ? m.quantidade
+          : -m.quantidade);
+
+      if (!Number.isSafeInteger(novoSaldo) || novoSaldo < 0) {
+        falhar();
+      }
+
+      saldos.set(m.produto, novoSaldo);
+
+      return {
+        id: m.id,
+        produto: m.produto,
+        quantidade: m.quantidade,
+        operacao: m.operacao,
+        data: m.data,
+        pessoa: m.operacao === "saida" ? m.pessoa : "",
+        area: m.operacao === "saida" ? m.area : "",
+        tipo: m.operacao === "saida" ? m.tipo : ""
+      };
+    });
+
+    return { produtos, movimentos };
+  }
+
+  elemento("restaurarBackup").onclick = async () => {
+    const arquivo = elemento("arquivoBackup").files[0];
+
+    if (!arquivo) {
+      mensagem("Selecione primeiro um arquivo de cópia JSON.");
+      return;
+    }
+
+    if (arquivo.size > 2000000) {
+      mensagem("Este protótipo aceita cópias de até 2 MB.");
+      return;
+    }
+
+    const botao = elemento("restaurarBackup");
+    botao.disabled = true;
+
+    try {
+      let copia;
+
+      try {
+        copia = JSON.parse(await arquivo.text());
+      } catch {
+        throw new Error(
+          "Não foi possível ler o arquivo. Selecione uma cópia JSON."
+        );
+      }
+
+      const restaurados = validar(copia);
+
+      const confirmar = confirm(
+        "Substituir todos os testes atuais por esta cópia?\n\n" +
+        restaurados.produtos.length + " produtos e " +
+        restaurados.movimentos.length + " movimentações.\n\n" +
+        "Cancele se ainda não baixou uma cópia dos dados atuais."
+      );
+
+      if (!confirmar) {
+        mensagem("Restauração cancelada. Nada foi alterado.");
+        return;
+      }
+
+      try {
+        localStorage.setItem(chave, JSON.stringify(restaurados));
+      } catch {
+        throw new Error(
+          "O navegador não permitiu salvar a cópia. " +
+          "Os testes atuais não foram substituídos."
+        );
+      }
+
+      dados = restaurados;
+
+      const lista = elemento("produto");
+      lista.replaceChildren();
+
+      dados.produtos.forEach(p => {
+        const opcao = document.createElement("option");
+        opcao.value = p.id;
+        opcao.textContent = p.nome + " · " + p.tamanho;
+        lista.append(opcao);
+      });
+
+      elemento("quantidade").value = "";
+      atualizar();
+
+      mensagem(
+        "Cópia restaurada: " +
+        dados.produtos.length + " produtos e " +
+        dados.movimentos.length + " movimentações."
+      );
+    } catch (erro) {
+      mensagem(erro.message);
+    } finally {
+      botao.disabled = false;
+    }
+  };
+})();
+</script>
 </body>
 </html>
