@@ -732,5 +732,359 @@ listas();
 renderizar();
 if (erroInicial) avisar(erroInicial);
 </script>
+<script>
+(() => {
+  const painel = criar("div", undefined, "card");
+  painel.innerHTML = `
+    <h3>Importar retiradas para análise</h3>
+    <p>Somente dados fictícios. Esta importação não altera
+    o estoque nem cria movimentações operacionais.</p>
+
+    <button type="button" id="exemploCSV" class="secondary">
+      Carregar exemplo fictício
+    </button>
+
+    <label for="arquivoCSV">Ou selecionar arquivo CSV</label>
+    <input id="arquivoCSV" type="file" accept=".csv,text/csv">
+
+    <label for="conteudoCSV">Conteúdo do relatório</label>
+    <textarea id="conteudoCSV" rows="8"
+      style="width:100%;padding:12px;font:14px monospace"
+      placeholder="id;data;codigo;quantidade;area;tipo"></textarea>
+
+    <p class="muted">
+      Formato desta etapa: separado por ponto e vírgula,
+      sem aspas nem campos com quebras de linha.
+      Datas no formato AAAA-MM-DD.
+    </p>
+
+    <div class="actions">
+      <button type="button" id="conferirCSV">Conferir relatório</button>
+      <button type="button" id="confirmarCSV" disabled>
+        Confirmar importação
+      </button>
+    </div>
+
+    <p id="resultadoCSV" role="status" aria-live="polite"></p>
+    <div id="detalhesCSV"></div>
+
+    <h3>Retiradas importadas — análise</h3>
+    <p id="resumoCSV"></p>
+    <div id="registrosCSV"></div>
+  `;
+
+  $("historico").append(painel);
+
+  const validarAnterior = validar;
+  const renderizarAnterior = renderizar;
+
+  function registroValido(r, produtos) {
+    if (!r || typeof r.id !== "string" ||
+        !r.id.trim() || r.id.length > 120 ||
+        typeof r.codigo !== "string" ||
+        !produtos.some(p => p.id === r.codigo) ||
+        !inteiro(r.quantidade) || r.quantidade === 0 ||
+        typeof r.area !== "string" ||
+        !r.area.trim() || r.area.length > 100 ||
+        r.area.trim().toUpperCase() === "CD" ||
+        !["Normal", "Extra"].includes(r.tipo) ||
+        typeof r.data !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(r.data)) return false;
+
+    const d = new Date(r.data + "T00:00:00Z");
+    return Number.isFinite(d.getTime()) &&
+      d.toISOString().slice(0, 10) === r.data &&
+      r.data <= hoje();
+  }
+
+  function copiarRegistro(r) {
+    return {
+      id: r.id,
+      data: r.data,
+      codigo: r.codigo,
+      quantidade: r.quantidade,
+      area: r.area,
+      tipo: r.tipo
+    };
+  }
+
+  validar = function(base) {
+    const resultado = validarAnterior(base);
+    const registros = base.retiradasAnalise ?? [];
+
+    if (!Array.isArray(registros) || registros.length > 10000) {
+      throw new Error("Base de retiradas de análise inválida.");
+    }
+
+    const ids = new Set();
+
+    resultado.retiradasAnalise = registros.map(r => {
+      if (!registroValido(r, resultado.produtos) || ids.has(r.id)) {
+        throw new Error("Retirada de análise inválida ou repetida.");
+      }
+      ids.add(r.id);
+      return copiarRegistro(r);
+    });
+
+    return resultado;
+  };
+
+  function mostrarAnalise() {
+    const registros = dados.retiradasAnalise || [];
+    const grupos = new Map();
+
+    registros.forEach(r => {
+      const p = dados.produtos.find(p => p.id === r.codigo);
+      grupos.set(p.unidade,
+        (grupos.get(p.unidade) || 0) + r.quantidade);
+    });
+
+    const totais = [...grupos].map(([u, n]) =>
+      n.toLocaleString("pt-BR") + " " + u
+    ).join(" · ");
+
+    $("resumoCSV").textContent =
+      registros.length + " registros importados" +
+      (totais ? " · " + totais : "") +
+      ". Estoque não afetado.";
+
+    $("registrosCSV").replaceChildren();
+
+    registros.slice().reverse().forEach(r => {
+      const p = dados.produtos.find(p => p.id === r.codigo);
+      const item = criar("div", undefined, "item");
+      item.append(
+        criar("strong", p.nome + " · " + p.tamanho),
+        criar("p", r.quantidade + " " + p.unidade +
+          " · " + r.area + " · " + r.tipo),
+        criar("p", r.data.split("-").reverse().join("/") +
+          " · " + r.id, "muted")
+      );
+      $("registrosCSV").append(item);
+    });
+
+    $("confirmarCSV").disabled = true;
+  }
+
+  renderizar = function() {
+    renderizarAnterior();
+    mostrarAnalise();
+  };
+
+  // Recupera também a análise salva em visitas anteriores.
+  // O carregamento original da página conhecia apenas os movimentos.
+  if (seguroParaSalvar) {
+    try {
+      const salvo = localStorage.getItem(CHAVE);
+      if (salvo) dados = validar(JSON.parse(salvo));
+    } catch {
+      seguroParaSalvar = false;
+      avisar("Não foi possível carregar a análise salva. " +
+        "Nada foi sobrescrito. Restaure sua cópia JSON.");
+    }
+  }
+
+  let pendentes = [];
+
+  function invalidarConferencia() {
+    pendentes = [];
+    $("confirmarCSV").disabled = true;
+    $("resultadoCSV").textContent =
+      "Conteúdo alterado. Confira o relatório antes de importar.";
+    $("detalhesCSV").replaceChildren();
+  }
+
+  $("conteudoCSV").oninput = invalidarConferencia;
+
+  $("exemploCSV").onclick = () => {
+    $("conteudoCSV").value =
+      "id;data;codigo;quantidade;area;tipo\n" +
+      "TESTE-001;2026-11-26;P01;2;Área Alfa;Normal\n" +
+      "TESTE-002;2026-11-26;P06;1;Área Beta;Extra\n" +
+      "TESTE-003;2026-11-26;P01;1;CD;Normal\n" +
+      "TESTE-001;2026-11-26;P01;2;Área Alfa;Normal";
+    invalidarConferencia();
+  };
+
+  $("arquivoCSV").onchange = async () => {
+    const arquivo = $("arquivoCSV").files[0];
+    if (!arquivo) return;
+
+    invalidarConferencia();
+    $("conteudoCSV").value = "";
+
+    if (arquivo.size > 500000) {
+      $("resultadoCSV").textContent = "Limite: 500 KB por arquivo CSV.";
+      return;
+    }
+
+    try {
+      $("conteudoCSV").value = await arquivo.text();
+      invalidarConferencia();
+    } catch {
+      $("resultadoCSV").textContent = "Não foi possível ler o arquivo.";
+    }
+  };
+
+  function conferir() {
+    const linhas = $("conteudoCSV").value
+      .replace(/^\uFEFF/, "")
+      .split(/\r\n|\n|\r/);
+
+    const cabecalho = (linhas.shift() || "").trim();
+    if (cabecalho !== "id;data;codigo;quantidade;area;tipo") {
+      throw new Error(
+        "Use o cabeçalho: id;data;codigo;quantidade;area;tipo"
+      );
+    }
+
+    if (linhas.length > 10000) {
+      throw new Error("Limite: 10.000 linhas por conferência.");
+    }
+
+    const conhecidos = new Map(
+      (dados.retiradasAnalise || []).map(r => [r.id, r])
+    );
+
+    const aceitos = [];
+    const detalhes = [];
+    let cd = 0, duplicados = 0, rejeitados = 0;
+
+    linhas.forEach((linha, indice) => {
+      if (!linha.trim()) return;
+      const numero = indice + 2;
+      const campos = linha.split(";").map(c => c.trim());
+
+      if (linha.includes('"') || campos.length !== 6) {
+        rejeitados++;
+        detalhes.push("Linha " + numero + ": formato inválido.");
+        return;
+      }
+
+      const [id, data, codigo, quantidade, area, tipo] = campos;
+
+      if (area.toUpperCase() === "CD") {
+        cd++;
+        detalhes.push("Linha " + numero + ": CD excluído.");
+        return;
+      }
+
+      const r = {
+        id, data, codigo,
+        quantidade: /^[0-9]+$/.test(quantidade)
+          ? Number(quantidade) : NaN,
+        area, tipo
+      };
+
+      if (!registroValido(r, dados.produtos)) {
+        rejeitados++;
+        detalhes.push("Linha " + numero +
+          ": verifique código cadastrado, data, quantidade, área e tipo.");
+        return;
+      }
+
+      if (conhecidos.has(id)) {
+        const igual =
+          JSON.stringify(copiarRegistro(conhecidos.get(id))) ===
+          JSON.stringify(copiarRegistro(r));
+
+        if (igual) {
+          duplicados++;
+          detalhes.push("Linha " + numero + ": duplicação ignorada.");
+        } else {
+          rejeitados++;
+          detalhes.push("Linha " + numero +
+            ": ID já usado com dados diferentes. Revise a origem.");
+        }
+        return;
+      }
+
+      conhecidos.set(id, r);
+      aceitos.push(r);
+      detalhes.push("Linha " + numero + ": pronta para importar.");
+    });
+
+    return { aceitos, detalhes, cd, duplicados, rejeitados };
+  }
+
+  $("conferirCSV").onclick = () => {
+    pendentes = [];
+    $("confirmarCSV").disabled = true;
+    $("detalhesCSV").replaceChildren();
+
+    try {
+      if (!seguroParaSalvar) {
+        throw new Error("Restaure sua cópia JSON antes de importar.");
+      }
+
+      const resultado = conferir();
+      pendentes = resultado.aceitos;
+
+      $("resultadoCSV").textContent =
+        pendentes.length + " prontos · " +
+        resultado.cd + " do CD excluídos · " +
+        resultado.duplicados + " duplicados · " +
+        resultado.rejeitados + " rejeitados. " +
+        "Nada foi salvo e o estoque não foi alterado.";
+
+      resultado.detalhes.forEach(t => {
+        $("detalhesCSV").append(criar("p", t, "muted"));
+      });
+
+      $("confirmarCSV").disabled = pendentes.length === 0;
+    } catch (erro) {
+      $("resultadoCSV").textContent = erro.message;
+    }
+  };
+
+  $("confirmarCSV").onclick = () => {
+    if (!pendentes.length) return;
+
+    // Confere novamente para evitar importar uma prévia desatualizada.
+    let novos;
+    try {
+      novos = conferir().aceitos;
+    } catch (erro) {
+      invalidarConferencia();
+      $("resultadoCSV").textContent = erro.message;
+      return;
+    }
+
+    if (!novos.length) {
+      invalidarConferencia();
+      return;
+    }
+
+    if (!confirm(
+      "Importar " + novos.length +
+      " retiradas somente para análise?\nO estoque não será alterado."
+    )) return;
+
+    let novaBase;
+    try {
+      novaBase = validar({
+        ...dados,
+        retiradasAnalise: [
+          ...(dados.retiradasAnalise || []),
+          ...novos
+        ]
+      });
+    } catch (erro) {
+      $("resultadoCSV").textContent = erro.message;
+      return;
+    }
+
+    if (!gravar(novaBase)) return;
+
+    pendentes = [];
+    renderizar();
+    $("resultadoCSV").textContent =
+      novos.length + " registros importados para análise. " +
+      "Estoque preservado. Baixe uma nova cópia de segurança.";
+  };
+
+  renderizar();
+})();
+</script>
 </body>
 </html>
